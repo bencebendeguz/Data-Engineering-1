@@ -1,0 +1,123 @@
+--For the database I used a relational database with business data from the following link: https://relational.fit.cvut.cz/dataset/Northwind, 
+Unfortunately current versions of workbench don't support their easy dump. I tried different workaround methods suggested by the website and 
+after hours of failing I managed to dump the dataset with an older version. 6.3.10
+After reinstalling the current one, I imported the tables and created my new database, northwind.--
+
+create database northwind;
+use northwind;
+--I change the name of 'order' table to 'orders' and 'order details' to 'orderdetails'. 
+Similarly to our class I planned to create a starschema with a sales fact and other connected parameters. 
+I joined different tables for the analytical layer in a stored procedure. I planned to analyze different aspects of the business so connected the revenue 
+of every deal with the sale representative closing it, and other details such as the product in question, its category, its supplier and the country 
+where it was sold. In the followings I created an event to call my previous stored procedure every month to get possible new data entries for a precise analysis. 
+Finally i categorized some of the data in a new form and created some views for BI purposes.
+--
+
+DROP PROCEDURE IF EXISTS Create_Rep_Sales_Store;
+DELIMITER //
+CREATE PROCEDURE Create_Rep_Sales_Store()
+BEGIN
+	DROP TABLE IF EXISTS sales;
+	CREATE TABLE sales AS 
+select o.unitprice*quantity as total_revenue, CONCAT(lastname, ' ', firstname) as sales_rep_name, 
+ productname as product_name, categoryname as category, s.CompanyName as supplier_company, 
+ c.country as customer_country
+from orderdetails o
+inner join products p 
+using (productid)
+inner join categories
+using (categoryid)
+inner join orders
+using (orderid)
+inner join customers c
+using (customerid)
+inner join employees
+using (employeeid)
+inner join suppliers s
+using (supplierid)
+order by o.unitprice*quantity desc ;
+
+END //
+DELIMITER ;
+
+call Create_Rep_Sales_Store;
+
+drop table if exists messages;
+create table messages (message varchar(100) NOT NULL);
+
+DROP EVENT IF EXISTS Create_Rep_Sales_Store_Event;
+DELIMITER $$
+CREATE EVENT Create_Rep_Sales_Store_Event
+ON SCHEDULE EVERY 1 month
+STARTS "2020-12-01" 
+ENDS "2020-12-01" + INTERVAL 1 year
+DO
+	BEGIN
+		INSERT INTO messages SELECT CONCAT('month:', month(current_timestamp));
+    		CALL CreateProductSalesStore();
+	END$$
+DELIMITER ;
+
+SHOW EVENTS;
+select * from messages;
+
+select ROUND(sum(total_revenue)/1000) as "total_revenue_in_thousand_USD",  
+   case 
+		when customer_country in ("Argentina", "Brazil", "Canada", "Mexico" ,"USA", "Venezuela") then  "America"  
+		else "Europe"
+    end as customer_region, 
+    count(*) as "number_of_deals"
+ from sales 
+ group by customer_region;
+ 
+ select round(sum(total_revenue)) as total_income,  
+   case 
+		when total_revenue >= 1800 then "big_deal"
+        when total_revenue < 1800 and total_revenue >700 then "middle_deal"
+        else "small_deal"
+    end as deal_category, count(*) as number_of_deals
+ from sales
+ group by deal_category
+ order by total_income desc;
+ 
+ select sales_rep_name, ROUND(sum(total_revenue)/1000) as "total_revenue_in_thousand_USD",  
+   case 
+		when total_revenue >= 1800 then "big_deal"
+        when total_revenue < 1800 and total_revenue >700 then "middle_deal"
+        else "small_deal"
+    end as deal_category, count(*) as number_of_deals
+ from sales
+ group by sales_rep_name,  
+   case 
+		when total_revenue >= 5500 then "big_deal"
+        when total_revenue < 5500 and total_revenue >1000 then "middle_deal"
+        else "small_deal"
+    end
+    order by total_revenue_in_thousand_USD desc;
+    
+    CREATE VIEW Europe_view AS
+SELECT * ,  
+   case 
+		when customer_country in ("Argentina", "Brazil", "Canada", "Mexico" ,"USA", "Venezuela") then  "America"  
+		else "Europe"
+    end as customer_region
+ from sales
+ having customer_region = "Europe";
+ 
+ CREATE VIEW Germany_view AS
+SELECT * from sales 
+where customer_country = "Germany";
+
+create view Fuller_view AS
+select * from sales 
+where sales_rep_name like "Fuller%";
+
+create view french_supplier_view as
+select * from sales 
+where supplier_company= "Aux joyeux ecclsiastiques";
+
+create view cereals_view as
+select * from sales 
+where category= "Grains/Cereals";
+ 
+    
